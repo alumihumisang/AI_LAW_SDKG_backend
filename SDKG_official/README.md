@@ -23,24 +23,89 @@ For legal-domain users, the frontend should normally keep the SDKG parameters fi
 - `experiment_outputs/severity_trees/`: preprocessed LH/HL severity-tree links.
 - `generation_outputs/SDKG_50q_FCH_TOP1...TOP10_ui_relations_20260809.*`: official 50-query generation outputs for TOP1 to TOP10.
 
-The `generation_outputs` CSV files already contain the fields most useful for UI inspection:
-
-- `query_text`
-- `generated_text`
-- `query_feature_profile`
-- `query_case_relations`
-- `top8_case_ids`
-- `top8_distances`
-- `top8_retrieval_sources`
-- `top8_query_case_relations`
-- `top8_case_full_texts`
-- `similar_cases`
-- `facts_section`
-- `laws_section`
-- `damages_section`
-- `conclusion_section`
+The `generation_outputs` CSV files already contain the fields most useful for UI inspection. See "Generation Output Columns" below for the detailed meaning of each column.
 
 For the thesis/demo story, TOP8 is the main display version. TOP9 and TOP10 are included because the experiment was run up to TOP10; they intentionally become slightly more generic because more retrieved cases are mixed into the generation context.
+
+## Generation Output Columns
+
+The recommended frontend prototype file is:
+
+```text
+generation_outputs/SDKG_50q_FCH_TOP8_ui_relations_20260809.csv
+```
+
+Each row is one query case and one generated complaint. The most important UI fields are `query_text`, `generated_text`, `query_feature_profile`, `query_case_relations`, and `top8_case_full_texts`.
+
+### Basic Query And Experiment Columns
+
+- `query_id`: The ID of the demo query, from 1 to 50.
+- `category`: The query type used in the 50-query demo set, such as single plaintiff/single defendant or multiple plaintiffs/defendants.
+- `exp_id`: Internal experiment ID. The main demo uses `E14`.
+- `exp_name`: Human-readable experiment name. The main demo uses `FC-H`.
+- `retrieval_mode`: Retrieval strategy. `dual_tree` means the query uses the SDKG dual severity-tree retrieval process.
+- `tree_exp_id`: The severity-tree configuration used for retrieval. It normally matches `exp_id`.
+- `weight_code`: Short code for the legal-dimension weight order. In `FC-H`, `F` means Fact has the largest weight and `C` means Compensation is the second-largest weight.
+- `tau_code`: Short code for the distance threshold level. `H` is the high-threshold setting.
+- `fact_w`: Weight of the Fact dimension.
+- `injury_w`: Weight of the Injury dimension.
+- `comp_w`: Weight of the Compensation dimension.
+- `tau`: Distance threshold used when constructing/retrieving from the SDKG relation structure.
+- `top_k`: Number of retrieved cases used as generation references.
+- `topk_style_level`: Internal style-control level used by the generation post-processing. Larger TOP values become slightly more generic because more cases are mixed into the context.
+- `model`: LLM used for complaint generation.
+
+### Query And Reference Text Columns
+
+- `query_text`: The lawyer-style input for the query case. This is the main input shown to the user.
+- `silver_reference_text`: Reference complaint text used for comparison/evaluation.
+- `legacy_silver_reference_text`: Earlier preserved reference text. It is kept for traceability and can usually be hidden from the UI.
+- `human_reference_text`: Human-written reference complaint. It can be used for internal comparison, not normally shown in the frontend.
+- `ground_truth_text`: Ground-truth complaint text used in experiments.
+- `gpt_baseline_text`: GPT baseline output used in the thesis experiment. It is useful for research comparison, but not required in the normal SDKG demo UI.
+
+### Anchor And Retrieval Columns
+
+- `anchor_case_id`: The first and closest case selected as the anchor case for the query.
+- `anchor_distance`: Distance between the query and the anchor case. Smaller means more similar under the SDKG distance calculation.
+- `anchor_score`: Weighted severity score of the anchor case under the selected legal-weight setting.
+- `top8_case_ids`: Case IDs of the retrieved cases used for UI display and generation. The name keeps the original TOP8 demo naming, but in TOP1, TOP9, and TOP10 files the number of IDs follows `top_k`.
+- `top8_distances`: Distances between the query and the retrieved cases, in the same order as `top8_case_ids`. Smaller values indicate closer retrieved cases.
+- `top8_retrieval_sources`: Retrieval source of each retrieved case. `anchor` is the anchor case; `lighter_tree` and `heavier_tree` indicate whether the case came from the lighter or heavier side of the dual-tree relation.
+- `top8_query_case_relations`: Query-to-case severity direction for each retrieved case. `LH` means the query is lighter than the retrieved case; `HL` means the query is heavier than the retrieved case.
+- `top8_case_full_texts`: Full text of the retrieved similar cases. This is useful for a frontend "similar case details" panel.
+
+### SDKG Explanation Columns
+
+- `query_feature_profile`: JSON string describing the query's extracted legal feature profile. It includes severity levels, severity scores, and Boolean feature information. This is the best source for visualizing the query's Boolean matrix or feature summary.
+- `query_case_relations`: JSON string describing each retrieved case's relation to the query, including rank, case ID, retrieval source, anchor information, distance, query score, case score, severity relation, feature profile, and shared feature information. This is the main field for drawing "why this case was retrieved."
+- `similar_cases`: JSON string containing compact retrieval metadata for the retrieved cases. It is useful for tables or cards that show rank, case ID, distance, score, and retrieval side.
+- `generation_support`: Plain-text support context passed to the generation step. It summarizes similar-case structures, accident facts, injury facts, compensation structures, and parent-case reasoning. This is useful for debugging why the generated complaint used certain wording.
+
+### Generated Complaint Columns
+
+- `facts_section`: Generated facts section of the complaint.
+- `laws_section`: Generated legal-basis section.
+- `damages_section`: Generated damages/compensation section.
+- `conclusion_section`: Generated conclusion and total-claim section.
+- `generated_text`: Final assembled complaint text shown to the user. It combines the facts, laws, damages, and conclusion sections.
+
+### Run Status Columns
+
+- `run_status`: Generation status. `ok` means the row was generated successfully.
+- `error_message`: Error message if generation failed. It should be empty when `run_status` is `ok`.
+
+### Recommended Frontend Use
+
+For the first frontend version, use these fields:
+
+- Query panel: `query_id`, `category`, `query_text`.
+- Generated complaint panel: `generated_text`, or the four section fields if the UI wants tabs.
+- Retrieval summary: `top_k`, `anchor_case_id`, `anchor_distance`, `top8_case_ids`, `top8_distances`, `top8_retrieval_sources`.
+- SDKG explanation panel: `query_feature_profile` and `query_case_relations`.
+- Similar-case detail panel: `top8_case_full_texts`.
+
+The frontend does not need to expose `fact_w`, `injury_w`, `comp_w`, `tau`, or `topk_style_level` in the main legal-user interface. These fields are included for research traceability and debugging.
 
 ## API Startup
 
