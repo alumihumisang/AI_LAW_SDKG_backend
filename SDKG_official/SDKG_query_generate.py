@@ -458,17 +458,48 @@ def load_queries(path: Path) -> list[dict]:
     return items
 
 
+def strip_section_heading(text: str) -> str:
+    return re.sub(r"^\s*[一二三四五六七八九十0-9]+[、．.]\s*[^:：\n]{0,30}[:：]?\s*", "", text or "").strip()
+
+
 def extract_sections(text: str) -> dict[str, str]:
     result = {"accident_facts": "", "injuries": "", "compensation_facts": ""}
-    fact_match = re.search(r"一[、．.\s]*事故發生緣由[:：]?\s*(.*?)(?=二[、．.]|$)", text, re.S)
-    injury_match = re.search(r"二[、．.\s]*(?:原告)?受傷情形[:：]?\s*(.*?)(?=三[、．.]|$)", text, re.S)
-    comp_match = re.search(r"三[、．.\s]*請求賠償的事實根據[:：]?\s*(.*?)$", text, re.S)
+    text = text or ""
+    fact_match = re.search(
+        r"(?:^|\n)\s*一[、．.\s]*(?:事故(?:發生)?(?:緣由|經過|事實)?|車禍(?:發生)?(?:緣由|經過)?|事實(?:經過|理由)?)[:：]?\s*(.*?)(?=(?:\n?\s*二[、．.])|$)",
+        text,
+        re.S,
+    )
+    injury_match = re.search(
+        r"(?:^|\n)\s*二[、．.\s]*(?:原告)?(?:受傷(?:情形|狀況)?|傷勢|受有傷害)[:：]?\s*(.*?)(?=(?:\n?\s*三[、．.])|$)",
+        text,
+        re.S,
+    )
+    comp_match = re.search(
+        r"(?:^|\n)\s*三[、．.\s]*(?:請求賠償(?:的)?(?:事實根據|事實|項目)?|賠償(?:事實|項目|金額)?|損害(?:賠償)?(?:事實|項目)?)[:：]?\s*(.*?)$",
+        text,
+        re.S,
+    )
     if fact_match:
         result["accident_facts"] = fact_match.group(1).strip()
     if injury_match:
         result["injuries"] = injury_match.group(1).strip()
     if comp_match:
         result["compensation_facts"] = comp_match.group(1).strip()
+
+    if not all(result.values()):
+        marker_matches = list(re.finditer(r"(?:^|\n)\s*([一二三])[、．.]\s*", text))
+        for pos, match in enumerate(marker_matches):
+            section_no = match.group(1)
+            start = match.start()
+            end = marker_matches[pos + 1].start() if pos + 1 < len(marker_matches) else len(text)
+            section_text = strip_section_heading(text[start:end])
+            if section_no == "一" and not result["accident_facts"]:
+                result["accident_facts"] = section_text
+            elif section_no == "二" and not result["injuries"]:
+                result["injuries"] = section_text
+            elif section_no == "三" and not result["compensation_facts"]:
+                result["compensation_facts"] = section_text
     return result
 
 
@@ -1018,9 +1049,28 @@ def call_llm(prompt: str, model: str, timeout: int = 180) -> str:
     return response.json()["response"].strip()
 
 
-def generate_standard_facts(accident_facts: str, model: str) -> str:
+def fallback_standard_facts(accident_facts: str) -> str:
+    text = accident_facts.strip()
+    text = re.split(r"(?:\n?\s*[二三][、．.])", text, maxsplit=1)[0].strip()
+    text = re.sub(r"^一[、．.\s]*(?:事故(?:發生)?(?:緣由|經過|事實)?|車禍(?:發生)?(?:緣由|經過)?|事實(?:經過|理由)?)[:：]?\s*", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > 900:
+        text = text[:900].rstrip("，,；;、 ")
+    if not text:
+        text = "被告因過失行為致原告受有損害，應依民法侵權行為相關規定負損害賠償責任"
+    if text.startswith("緣"):
+        return f"一、{text}"
+    return f"一、緣{text}"
+
+
+def generate_standard_facts(accident_facts: str, model: str, use_llm: bool = True) -> str:
+    if not use_llm:
+        return fallback_standard_facts(accident_facts)
     prompt = build_strict_facts_prompt(accident_facts)
-    result = call_llm(prompt, model)
+    try:
+        result = call_llm(prompt, model)
+    except requests.exceptions.RequestException:
+        return fallback_standard_facts(accident_facts)
     result = re.sub(r"^一、\s*\n+\s*", "一、", result.strip())
     m = re.search(r"一、\s*(.*)", result, re.S)
     if m:
@@ -1179,7 +1229,11 @@ def run_generation_for_query(
         legal_keys,
     )
     style_level = topk_style_level(top_k)
-    facts = generate_standard_facts(sections["accident_facts"] or query_row["query_text"], model)
+    facts = generate_standard_facts(
+        sections["accident_facts"] or query_row["query_text"],
+        model,
+        use_llm=not bool(query_row.get("original_query_text")),
+    )
     facts = cleanup_generated_lawsuit_text(facts)
     laws = generate_standard_laws(
         sections["accident_facts"] or query_row["query_text"],
@@ -1230,6 +1284,7 @@ def run_generation_for_query(
         "lighter_candidates": retrieval_meta["lighter_candidates"],
         "heavier_candidates": retrieval_meta["heavier_candidates"],
         "query_text": query_row["query_text"],
+        "original_query_text": query_row.get("original_query_text", query_row["query_text"]),
         "silver_reference_text": query_row["ground_truth_text"],
         "legacy_silver_reference_text": query_row["ground_truth_text"],
         "reference_text": query_row["ground_truth_text"],
