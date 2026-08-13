@@ -209,6 +209,8 @@ def extract_required_damage_items(comp_facts: str) -> list[dict]:
         amount_match = first_claim_amount_match(line)
         if not amount_match:
             continue
+        if is_overall_total_amount(line, amount_match):
+            continue
         amount_raw = amount_match.group(1)
         amount_value = normalize_amount_value(amount_raw)
         amount_display = normalize_amount_display(amount_raw)
@@ -232,6 +234,8 @@ def extract_required_damage_items(comp_facts: str) -> list[dict]:
             continue
         for amount_match in re.finditer(AMOUNT_PATTERN, sentence):
             if is_rate_or_reference_amount(sentence, amount_match):
+                continue
+            if is_overall_total_amount(sentence, amount_match):
                 continue
             amount_raw = amount_match.group(1)
             amount_value = normalize_amount_value(amount_raw)
@@ -262,8 +266,28 @@ def normalize_required_source_key(text: str) -> str:
 def first_claim_amount_match(sentence: str) -> re.Match[str] | None:
     for amount_match in re.finditer(AMOUNT_PATTERN, sentence):
         if not is_rate_or_reference_amount(sentence, amount_match):
+            if is_overall_total_amount(sentence, amount_match):
+                continue
             return amount_match
     return None
+
+
+def is_overall_total_amount(sentence: str, amount_match: re.Match[str]) -> bool:
+    normalized = re.sub(r"\s+", "", unicodedata.normalize("NFC", sentence or ""))
+    raw_before = unicodedata.normalize("NFC", sentence[:amount_match.start()])
+    raw_after = unicodedata.normalize("NFC", sentence[amount_match.end():amount_match.end() + 40])
+    prefix = re.sub(r"\s+", "", raw_before[-42:])
+    suffix = re.sub(r"\s+", "", raw_after)
+
+    if re.search(r"(上開|上揭|前述|全部|各項|本件)[^，。；]{0,12}(損害|請求|賠償)[^，。；]{0,8}(合計|共計|總計|總共|總額|為)$", prefix):
+        return True
+    if re.search(r"(損害|請求|賠償)[^，。；]{0,10}(合計|共計|總計|總共|總額)$", prefix):
+        return True
+    if re.search(r"(合計|共計|總計|總共|總額)$", prefix) and re.search(r"(並自起訴狀|起訴狀繕本|清償日止|年息)", suffix):
+        return True
+    if re.search(r"(請求被告|向被告請求|請求連帶賠償|應賠償|應連帶賠償)[^。；\n]{0,30}(合計|共計|總計|總共|總額)[0-9,萬]+元", normalized):
+        return True
+    return False
 
 
 def is_personal_context_only_line(line: str) -> bool:
@@ -1222,7 +1246,7 @@ def extract_ordered_personal_context(source: str) -> str:
 
 
 def extract_medical_process_terms(source: str) -> str:
-    return join_matches(source, [
+    terms = join_matches(source, [
         r"於[^，。；]{0,60}(?:醫院|該院)[^，。；]{0,30}(?:住院|門診|就診|接受物理治療|復健治療|治療|檢查)",
         r"原告於[^。；]{0,80}(?:門診|就診|治療|檢查)",
         r"於[^，。；]{0,40}(?:門診|就診|治療|檢查)",
@@ -1238,6 +1262,17 @@ def extract_medical_process_terms(source: str) -> str:
         r"復健治療",
         r"往返醫療院所就醫",
     ])
+    return filter_medical_process_terms(terms)
+
+
+def filter_medical_process_terms(text: str) -> str:
+    kept = []
+    for value in [clean_source_fragment(part) for part in text.split("；") if clean_source_fragment(part)]:
+        if "費用" in value:
+            continue
+        if value and value not in kept:
+            kept.append(value)
+    return "；".join(kept)
 
 
 def extract_damage_object_terms(source: str) -> str:
@@ -1514,6 +1549,8 @@ def mental_hospital_period(period: str) -> str:
     if not period:
         return ""
     for value in [part.strip(" ，。；") for part in period.split("；")]:
+        if "費用" in value:
+            continue
         match = re.search(r"出院共計([0-9一二三四五六七八九十]+天)", value)
         if match:
             return f"住院{match.group(1)}"
@@ -1557,6 +1594,8 @@ def mental_rest_period(period: str) -> str:
     if not period:
         return ""
     for value in [part.strip(" ，。；") for part in period.split("；")]:
+        if "費用" in value:
+            continue
         if "需休養" in value:
             return value
     return ""
@@ -1602,6 +1641,13 @@ def draft_damage_sentence(fact: dict) -> str:
                 parts.append(evidence_phrase)
             parts.append(f"合計醫療費用{amount}")
             return "，".join(parts) + "。"
+        if amount_present_in_text(amount_raw, amount_value, source_span or source_line):
+            sentence = clean_labeled_source_sentence(source_span or source_line, label)
+            if injury_text and not re.search(r"(受有|受傷|傷害)", sentence):
+                sentence = f"{subject}{injury_text}，{sentence}"
+            elif subject != "原告" and not sentence.startswith(subject) and claimant not in sentence[:80]:
+                sentence = f"{subject}{sentence}"
+            return ensure_sentence_punctuation(sentence)
         claim = ensure_claim_verb(clean_source_fragment(local_claim or basis or f"支出醫療費用{amount}"))
         parts = [subject + injury_text]
         for value in [medical]:
