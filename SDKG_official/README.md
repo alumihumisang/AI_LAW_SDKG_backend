@@ -134,6 +134,25 @@ Health check:
 curl http://localhost:8000/health
 ```
 
+Analyze one user input before generation:
+
+```bash
+curl -X POST http://localhost:8000/analyze \
+  -H 'Content-Type: application/json' \
+  -d '{"query_text":"一、事故發生緣由：被告王○○駕車右轉未禮讓直行機車，撞擊原告李○○。二、原告受傷情形：原告受有右鎖骨骨折，住院5日並休養3個月。三、請求賠償的事實根據：醫療費用68,430元，並有醫療費用收據為證；工作損失114,000元；精神慰撫金150,000元。上開損害合計332,430元。","category":"單純原被告各一"}'
+```
+
+The `/analyze` response is designed for the frontend input-check panel. It includes:
+
+- `normalized_query_text`: the three-section text that the backend will use internally.
+- `extracted.plaintiffs` and `extracted.defendants`: detected party names.
+- `extracted.injuries`: detected injury descriptions.
+- `extracted.treatment`: detected hospitals or clinics.
+- `extracted.damage_items`: detected compensation items, amounts, evidence hints, and basis hints.
+- `extracted.calculated_item_total`: backend sum of the detected compensation items.
+- `warnings`: missing or suspicious information to show the user before generation.
+- `ready_to_generate`: whether the input is complete enough for normal generation.
+
 Generate one complaint:
 
 ```bash
@@ -194,10 +213,34 @@ bash SDKG_official/run_TOP9_to_TOP10_ui_relations_20260809.sh
 ## Notes For Frontend Handoff
 
 1. Use `generation_outputs/SDKG_50q_FCH_TOP8_ui_relations_20260809.csv` first for static UI prototyping.
-2. Use `/generate` for live generation after the UI layout is stable.
-3. Keep `experiment="FC-H"` and `top_k=8` for the main legal-user demo.
-4. Do not expose alpha, beta, lambda, or tau controls in the first UI unless an experiment/debug mode is needed.
-5. The current API returns compact retrieval metadata. If the UI needs full similar-case text and full Boolean matrices in live API responses, extend `web_indictment_generator.public_response()` using the fields already produced by `SDKG_query_generate.py`.
+2. Use `/analyze` before `/generate` for live user input. The UI should show the normalized three-section text and warnings so the user can補充 missing facts before generation.
+3. Use `/generate` only after the user confirms the input, or allow generation with a visible warning when `ready_to_generate=false`.
+4. Keep `experiment="FC-H"` and `top_k=8` for the main legal-user demo.
+5. Do not expose alpha, beta, lambda, or tau controls in the first UI unless an experiment/debug mode is needed.
+6. The current API returns compact retrieval metadata. If the UI needs full similar-case text and full Boolean matrices in live API responses, extend `web_indictment_generator.public_response()` using the fields already produced by `SDKG_query_generate.py`.
+
+## Recommended Live UI Flow
+
+For arbitrary user input, the backend now supports a two-step flow:
+
+```text
+User input
+-> POST /analyze
+-> Show extracted parties, injuries, compensation items, totals, and warnings
+-> User edits or confirms
+-> POST /generate
+-> Show generated complaint and SDKG similar-case explanation
+```
+
+The frontend can still display the following recommended input template:
+
+```text
+一、事故發生緣由：
+二、原告受傷情形：
+三、請求賠償的事實根據：
+```
+
+The backend does not require the user to follow this format exactly. If the user enters free text, `/analyze` will normalize it into the three-section format and report what information may be missing.
 
 ## Preprocessing Scope
 

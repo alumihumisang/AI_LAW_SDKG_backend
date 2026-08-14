@@ -18,6 +18,7 @@ from .web_indictment_generator import (
     DEFAULT_TOP_K,
     GenerationConfig,
     IndictmentGenerator,
+    analyze_query_text,
 )
 
 
@@ -30,6 +31,11 @@ class GenerateRequest(BaseModel):
     model: str = "gemma3:27b"
     llm_url: str = "http://localhost:11434/api/generate"
     case_limit: int | None = Field(None, ge=1)
+
+
+class AnalyzeRequest(BaseModel):
+    query_text: str = Field(..., min_length=1)
+    category: str = ""
 
 
 app = FastAPI(title="AI_LAW SDKG Indictment API")
@@ -68,6 +74,16 @@ def generate(request: GenerateRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"generation failed: {exc}") from exc
+
+
+@app.post("/analyze")
+def analyze(request: AnalyzeRequest) -> dict:
+    try:
+        return analyze_query_text(request.query_text, category=request.category)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"analysis failed: {exc}") from exc
 
 
 @lru_cache(maxsize=8)
