@@ -265,14 +265,14 @@ def determine_applicable_laws_structured(accident_facts: str, injuries: str, com
         applicable_laws.append("民法第195條第1項前段")
 
     if relationships["未成年"]:
-        applicable_laws.append("民法第187條第1項")
+        applicable_laws.append("民法第187條第1項前段")
     elif relationships["雇傭關係"]:
         applicable_laws.append("民法第188條第1項本文")
     elif relationships["多被告"]:
-        applicable_laws.append("民法第185條第1項")
+        applicable_laws.append("民法第185條第1項前段")
 
     if relationships["動物損害"]:
-        applicable_laws.append("民法第190條第1項")
+        applicable_laws.append("民法第190條第1項前段")
 
     normalized = [normalize_article_number(law) for law in applicable_laws]
     return list(dict.fromkeys(normalized))
